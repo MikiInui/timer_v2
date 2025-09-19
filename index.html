@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>プレゼンテーションタイマー</title>
+    <!-- Tailwind CSSを読み込み -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 音声再生ライブラリ Tone.js を読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* デフォルトのフォントを設定 */
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        /* 時間表示部分のフォントは数字が見やすいInterを優先 */
+        .timer-display {
+            font-family: 'Inter', sans-serif;
+        }
+        /* 入力フィールドの矢印を非表示に */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+        #timer {
+            cursor: pointer;
+            -webkit-user-select: none; /* Safari */
+            -ms-user-select: none; /* IE 10+ */
+            user-select: none; /* Standard syntax */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="bg-white rounded-2xl shadow-xl p-6 sm:p-8 lg:p-12 w-full max-w-md text-center">
+
+        <!-- 時間表示エリア -->
+        <div id="timer-display-bg" class="bg-gray-200 rounded-lg p-6 lg:p-8 transition-colors duration-300 overflow-hidden flex items-center justify-center">
+            <h1 id="timer" class="timer-display text-7xl lg:text-8xl font-bold text-gray-800 tracking-wider">
+                05:00
+            </h1>
+        </div>
+        <p class="text-gray-500 mt-2 text-sm">時間をクリックして設定</p>
+
+        <!-- 時間設定エリア (初期状態では非表示) -->
+        <div id="settings-panel" class="mt-6 hidden">
+            <div class="flex items-center justify-center space-x-2 sm:space-x-4">
+                <input id="minutes" type="number" min="0" max="99" value="5" class="w-24 sm:w-32 text-4xl sm:text-5xl text-center bg-gray-100 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <span class="text-4xl sm:text-5xl text-gray-500">:</span>
+                <input id="seconds" type="number" min="0" max="59" value="0" class="w-24 sm:w-32 text-4xl sm:text-5xl text-center bg-gray-100 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+        </div>
+
+        <!-- 操作ボタンエリア -->
+        <div class="mt-8 flex justify-center space-x-4">
+            <button id="start-pause-btn" class="w-36 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg text-lg transition shadow-md">
+                スタート
+            </button>
+            <button id="reset-btn" class="w-36 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg text-lg transition shadow-md">
+                リセット
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // DOM要素の取得
+        const timerDisplay = document.getElementById('timer');
+        const minutesInput = document.getElementById('minutes');
+        const secondsInput = document.getElementById('seconds');
+        const startPauseBtn = document.getElementById('start-pause-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const settingsPanel = document.getElementById('settings-panel');
+        const timerDisplayBg = document.getElementById('timer-display-bg');
+
+        let timerInterval = null;
+        let totalSeconds = (parseInt(minutesInput.value, 10) || 0) * 60 + (parseInt(secondsInput.value, 10) || 0);
+        let initialTotalSeconds = totalSeconds;
+        let isRunning = false;
+        
+        // 音を鳴らすシンセサイザーの準備 (少しベルに近い音色に調整)
+        const synth = new Tone.Synth({
+            oscillator: {
+                type: 'sine' // sine波は柔らかい音
+            },
+            envelope: {
+                attack: 0.005,
+                decay: 0.1,
+                sustain: 0.3,
+                release: 1 // releaseを長くすると響きが残る
+            }
+        }).toDestination();
+
+        // 時間表示を更新する関数
+        function updateTimerDisplay() {
+            const min = Math.floor(totalSeconds / 60);
+            const sec = totalSeconds % 60;
+            timerDisplay.textContent = `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+        }
+        
+        // 1秒ごとに時間を減らすメインの関数
+        function tick() {
+            if (totalSeconds > 0) {
+                totalSeconds--;
+                updateTimerDisplay();
+            } else {
+                // タイマーが0になった時の処理
+                clearInterval(timerInterval);
+                isRunning = false;
+                timerDisplayBg.classList.remove('bg-gray-200');
+                timerDisplayBg.classList.add('bg-red-500');
+                timerDisplay.classList.add('text-white');
+
+                try {
+                    if (Tone.context.state === 'running') {
+                        // より綺麗な鈴のような音色 "リンリンリンリンリン"
+                        const now = Tone.now();
+                        const note = "C7"; // 高く澄んだ音
+                        const duration = "8n"; // 音の長さ
+                        synth.triggerAttackRelease(note, duration, now);
+                        synth.triggerAttackRelease(note, duration, now + 0.25);
+                        synth.triggerAttackRelease(note, duration, now + 0.5);
+                        synth.triggerAttackRelease(note, duration, now + 0.75);
+                        synth.triggerAttackRelease(note, duration, now + 1.0);
+                    }
+                } catch(e) { console.error("音声の再生に失敗しました:", e); }
+                
+                startPauseBtn.textContent = 'スタート';
+                startPauseBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
+                startPauseBtn.classList.add('bg-blue-500', 'hover:bg-blue-600');
+            }
+        }
+
+        // タイマーの背景色をリセットする関数
+        function resetTimerColor() {
+            timerDisplayBg.classList.remove('bg-red-500');
+            timerDisplayBg.classList.add('bg-gray-200');
+            timerDisplay.classList.remove('text-white');
+        }
+
+        // イベントリスナーの設定
+        // 時間表示をクリックしたら、設定パネルの表示/非表示を切り替える
+        timerDisplay.addEventListener('click', () => {
+            if (!isRunning) {
+                settingsPanel.classList.toggle('hidden');
+            }
+        });
+
+        // スタート/一時停止ボタンのクリックイベント
+        startPauseBtn.addEventListener('click', () => {
+            // 音声再生の準備
+            if (Tone.context.state !== 'running') {
+                Tone.context.resume().catch(e => console.error("オーディオコンテキストの開始に失敗しました:", e));
+            }
+
+            if (!isRunning) {
+                // スタートまたは再開
+                isRunning = true;
+                
+                // 「再開」でない初回スタート時に、入力値から時間を取得
+                if (startPauseBtn.textContent !== '再開') {
+                    const minutes = parseInt(minutesInput.value, 10) || 0;
+                    const seconds = parseInt(secondsInput.value, 10) || 0;
+                    totalSeconds = minutes * 60 + seconds;
+                    initialTotalSeconds = totalSeconds;
+                }
+                
+                if (totalSeconds <= 0) {
+                    isRunning = false;
+                    return; // 時間が0ならスタートしない
+                }
+                
+                settingsPanel.classList.add('hidden'); // 開始したら設定パネルを隠す
+                resetTimerColor();
+                timerInterval = setInterval(tick, 1000);
+                startPauseBtn.textContent = '一時停止';
+                startPauseBtn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                startPauseBtn.classList.add('bg-yellow-500', 'hover:bg-yellow-600');
+            } else {
+                // 一時停止
+                isRunning = false;
+                clearInterval(timerInterval);
+                startPauseBtn.textContent = '再開';
+                startPauseBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
+                startPauseBtn.classList.add('bg-blue-500', 'hover:bg-blue-600');
+            }
+        });
+        
+        // リセットボタンのクリックイベント
+        resetBtn.addEventListener('click', () => {
+            clearInterval(timerInterval);
+            isRunning = false;
+            totalSeconds = initialTotalSeconds;
+            updateTimerDisplay();
+
+            startPauseBtn.textContent = 'スタート';
+            startPauseBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
+            startPauseBtn.classList.add('bg-blue-500', 'hover:bg-blue-600');
+            
+            resetTimerColor();
+        });
+
+        // 入力値が変わったら、タイマー表示に即時反映させる関数
+        function syncDisplayFromInputs() {
+             if (!isRunning) {
+                const minutes = parseInt(minutesInput.value) || 0;
+                const seconds = parseInt(secondsInput.value) || 0;
+                timerDisplay.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            }
+        }
+        minutesInput.addEventListener('input', syncDisplayFromInputs);
+        secondsInput.addEventListener('input', syncDisplayFromInputs);
+
+        // 初回表示
+        updateTimerDisplay();
+    </script>
+</body>
+</html>
+
+
+
+
+
+
